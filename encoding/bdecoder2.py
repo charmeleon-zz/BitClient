@@ -1,6 +1,6 @@
 #!/usr/bin/dev python3
 #Author: Erick
-#Credit: http://effbot.org/zone/bencode.htm#usage
+#Recursion credit: http://effbot.org/zone/bencode.htm#usage
 #10/5/2012: Finished porting to python3k
 import re
 def atom(text, match=re.compile('([deli])|(\d+):|-?(\d+)').match):
@@ -48,7 +48,7 @@ def decode_singleton(singleton, token):
 
 def decode(text):
   '''
-  Decode bencoded text in accordance to the BitTorrent specification
+  Decode bencoded string in accordance to the BitTorrent specification
 
   '''
   try:
