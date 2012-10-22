@@ -75,6 +75,7 @@ class Connection(object):
       url+='%s=%s&'%(key,value) #TODO: @SEE parse.urlencode
     url = url[:-1] # chop off the last member (ouch)
   
+    # TODO: Support for multi-trackers (dictionary form)
     if "http://" in meta_info['announce']:
       print("Querying tracker...")
       info_hash = "%5c2V%deA%d3z%f1%7f%c8%ef%20%bc%3f%e8q%f8%c7%e8%0f"
@@ -82,7 +83,7 @@ class Connection(object):
       if info_hash==params["info_hash"]:
         print("They are the same")
       else:
-      print("URL: ",url)
+        print("URL: ",url)
   def parse_tracker_response(self,tracker_response):
     '''
     Capture and parse the tracker response

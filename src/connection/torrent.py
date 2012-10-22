@@ -4,6 +4,7 @@
 import os, sys
 # BitClient lib
 #import peer
+#from src.encoding import bdecoder
 from src.encoding import bdecoder
 
 class Torrent(object):
@@ -13,22 +14,14 @@ class Torrent(object):
   '''
 
   def __init__(self,filename):
-    '''Initialize a torrent object, given the filename
-    A torrent object should consist, at minimum, of the following:
-    * a .torrent file containing the metadata for this file
-    * a file identical in name to the .torrent file but replaces the ending
-      .torrent with .part, which will keep track of our progress
-    * methods: totalSize(), totalDownloaded()
-    '''
-    # localize folder where torrents are stored
+    '''Initialize a torrent object, given the filename'''
     self.filename = filename
-    # if it has finished downloading, then there won't be a part file!
     self.partfilename = self._getPartFileName()
     self.partfile = self._getPartFile("r")
     #TODO: realistically, on startup we should recognize whether a file has
     #finished downloading, and seed if it has
     self.metainfo_data = self._readTorrentFile()
-    pass
+    self.trackers = []
 
   def _readTorrentFile(self):
     '''Attempt to read a torrent file and return its content.
@@ -37,7 +30,7 @@ class Torrent(object):
     '''
     try:
       with open(self.filename, mode='rb') as localized_file:
-        return encoding.bdecoder.decode(localized_file.read().decode("latin1"))
+        return bdecoder.decode(localized_file.read().decode("latin1"))
     except IOError as e:
       print("File ",self.filename," could not be found")
       sys.exit(2)
@@ -71,12 +64,23 @@ class Torrent(object):
 
   def totalDownloaded(self):
     '''Return the total downloaded, which is the size of the part file'''
-    pass
+    return os.path.getsize(self.partfilename)
 
   def totalSize(self):
     '''Return the total size of the file'''
-    pass
+    return self.metainfo_data['']
   
   def getTrackers(self):
+    '''Return the list of HTTP trackers'''
+    # NOTE: How often do trackers really change?
+    # OTOH: This keeps a neat __init__
+    self._updateTrackers() 
+    return self.trackers
+
+  def _updateTrackers(self):
+    '''Read the metainfo for the latest tracker info'''
+    # TODO: This needs HTTP restriction. For any other specification, print err
     for t in self.metainfo_data['announce']:
-      print("Announce list: ",t)
+      if t not in self.trackers:
+        self.trackers.append(t)
+
