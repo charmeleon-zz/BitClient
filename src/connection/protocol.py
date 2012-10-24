@@ -1,13 +1,17 @@
 #!/usr/bin/dev python3
-# BitClient -- connection.py
+# BitClient -- protocol.py
 import sys,socket
 
-class Connection(object):
-  '''
-  The connection client for BitClient. A single connection should manage all
-  sockets
+MESSAGES = {"keep-alive":"0000",
+            "choke":"00010",
+            "unchoke":"00011",
+            "interested":  "00012",
+            "not-interested":"00013"}
 
-  '''
+
+class Connection(object):
+  '''The connection client for BitClient. A single connection should manage all
+  sockets'''
 
   def __init__(self,HOST='',PORT=0):
     '''

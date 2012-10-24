@@ -1,12 +1,14 @@
 #!/usr/bin/dev python3
 # Bitclient -- tracker.py
 
-import sys, re, socket, struct
+import sys, re, socket, struct, time, math
 from urllib.parse import urlparse, urljoin
 from urllib.request import urlopen
 from urllib.error import URLError
 from src.encoding import bdecoder
 
+TRACKER_TIMEOUT = 300 # Timeout if tracker request fails
+MAX_FAILURE = 6 # Maximum number of failures for a tracker before we no longer try (sesh)
 
 class Tracker(object):
   '''A wrapper object for client-tracker communications'''
@@ -18,24 +20,30 @@ class Tracker(object):
     self.host = self.p.hostname
     self.port = 0 if self.p.port is None else self.p.port
     self.timeout = False  # if the tracker misbehaves, have it sit in a corner
-    self.timer = 300 # how often we should re-announce (or re-ping), in seconds
+    self.timeouts = 0 # num of times we have requested tracker and it has been out
+    self.refresh = None
+    self.timer = time.time()
 
   def announce(self,query_string):
     '''Announce to the tracker, returns the tracker's raw HTTP reply (headers included).
     Returns the peer list of tuples'''
-    if self.timeout==False:
-      # The query string changes, so we should re-parse every time we announce
-      newp = urlparse(self.tracker_url+query_string)
-      try:
+    # The query string changes, so we should re-parse every time we announce
+    newp = urlparse(self.tracker_url+query_string)
+    try:
+        print("URL: %s?%s"%(self.tracker_url,newp.query))
         rawreply = urlopen("%s?%s"%(self.tracker_url,newp.query)).read().decode("latin1") # bencoded reply
         return self.get_peer_list(rawreply)
-      except (ConnectionRefusedError, URLError) as e:
-        print("An error ocurred when connecting to host %s: %s. Trying again in %ds"%(self.host,e,300))
-        self.timeout = True
-        self.timer = 300
-        pass
-    else:
+    except (ConnectionRefusedError, URLError) as e:
+      print("An error ocurred when connecting to host %s: %s. Trying again in %ds"%(self.host,e,TRACKER_TIMEOUT))
+      self.timeout = True
+      self.timer = time.time()
       pass
+
+  def can_reannounce(self):
+    return bool(self.refresh is None or (time.time()-self.timer)>=self.refresh)
+
+  def is_available(self):
+    return bool(self.timeout==False or (self.timeout==True and math.floor(time.time()-self.timer)>=TRACKER_TIMEOUT and self.timeouts<MAX_FAILURE))
 
   def reannounce(self):
     '''Re-announce'''

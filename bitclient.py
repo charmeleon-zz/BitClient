@@ -19,17 +19,20 @@ def run():
   if queue is None or len(queue)==0:
     print("No files in queue")
   else:
-    torrentList = [] # A list of torrent objects
-    # TODO: A timer for when to refresh the queue
+    torrentQueue = {} # A list of torrent objects
+    # TODO: A timer for when to refresh the queue?
     print("Appending .torrent files to queue")
     print("Files in queue: ")
     for filename in queue:
       print("\t%s"%filename)
-      torrentList.append(torrent.Torrent(filename)) # now connect to the trackers
-    print()
-    for tor in torrentList:
-#      help(tor)
-      tor.query_trackers()
+      torrentQueue[filename]=torrent.Torrent(filename)
+    print("Torrenting")
+    for name,tor in torrentQueue.items():
+      try:
+        tor.torrent()
+      except KeyboardInterrupt:
+        print("Stopping BitClient")
+#      tor.query_trackers()
 '''    shutdown = False
     while not shutdown:
       try:
