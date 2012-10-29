@@ -30,9 +30,9 @@ class Tracker(object):
     # The query string changes, so we should re-parse every time we announce
     newp = urlparse(self.tracker_url+query_string)
     try:
-        print("URL: %s?%s"%(self.tracker_url,newp.query))
-        rawreply = urlopen("%s?%s"%(self.tracker_url,newp.query)).read().decode("latin1") # bencoded reply
-        return self.get_peer_list(rawreply)
+      print("URL: %s?%s"%(self.tracker_url,newp.query))
+      rawreply = urlopen("%s?%s"%(self.tracker_url,newp.query)).read().decode("latin1") # bencoded reply
+      return self.get_peer_list(rawreply)
     except (ConnectionRefusedError, URLError) as e:
       print("An error ocurred when connecting to host %s: %s. Trying again in %ds"%(self.host,e,TRACKER_TIMEOUT))
       self.timeout = True
@@ -43,7 +43,8 @@ class Tracker(object):
     return bool(self.refresh is None or (time.time()-self.timer)>=self.refresh)
 
   def is_available(self):
-    return bool(self.timeout==False or (self.timeout==True and math.floor(time.time()-self.timer)>=TRACKER_TIMEOUT and self.timeouts<MAX_FAILURE))
+    return bool(self.timeout==False or 
+                  (self.timeout==True and math.floor(time.time()-self.timer)>=TRACKER_TIMEOUT and self.timeouts<MAX_FAILURE))
 
   def reannounce(self):
     '''Re-announce'''
@@ -63,11 +64,8 @@ class Tracker(object):
       sys.exit(1)
     else: # binary model
       peers = self._parse_binary_peers(unparsed_peers)
-      while True:
-        try:
-          peers_list.append(self.get_peer_info(next(peers)))
-        except StopIteration: # keep going!
-          break
+      for p in peers:
+        peers_list.append(self.get_peer_info(p))
       return [{"ip":k[0],"port":k[1]} for k in peers_list]
 
   def _parse_binary_peers(self,peers):
