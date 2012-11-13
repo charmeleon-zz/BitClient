@@ -1,5 +1,6 @@
 #!/usr/bin/sys python3
 # A basic cli BitTorrent Client -- bitclient.py
+# Copyright Erick Rivas until the heat death of the universe
 # Python's standard library
 from sys import argv
 from hashlib import sha1 as sha
@@ -22,14 +23,13 @@ def run():
     torrentQueue = {} # A list of torrent objects
     # TODO: A timer for when to refresh the queue?
     print("Appending .torrent files to queue")
-    print("Files in queue: ")
     for filename in queue:
-      print("\t%s"%filename)
       torrentQueue[filename]=torrent.Torrent(filename)
     print("Torrenting")
     for name,tor in torrentQueue.items():
       try:
-        tor.torrent()
+        if tor.has_good_status():
+          tor.torrent()
       except KeyboardInterrupt:
         print("Stopping BitClient")
 #      tor.query_trackers()

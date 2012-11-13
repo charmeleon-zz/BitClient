@@ -52,6 +52,7 @@ class Tracker(object):
   def get_peer_list(self,raw_reply):
     '''Returns dictionary of peers with ip,port keys'''
     response = bdecoder.decode(raw_reply) # decode
+    self.refresh = response['interval']
     if 'peers' not in response:
       print("Peer list from tracker is empty. ",end="")
       if 'failure reason' in response:
