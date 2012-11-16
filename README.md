@@ -2,6 +2,12 @@
 
 BitClient uses only code from the standard python library. I've created it as a way to get familiar with Python and Networking
 
+## Usage
+To use, simply call from terminal:
+    python3 bitclient.py
+
+The script will look for any .torrent file under the torrents/ folder and begin download
+
 ## TODO
 ### Functional
 * Set 'rate' modifier to update only the last line in terminal buffer
