@@ -4,10 +4,6 @@
 
 import os
 
-#READONLY = 1
-#WRITEONLY = 2
-#READWRITE = 3
-
 class File(object):
   READONLY = 1
   WRITEONLY = 2
@@ -21,7 +17,6 @@ class File(object):
     elif mode == File.READONLY:
       self.mode = os.O_RDONLY|os.O_CREAT
     self.fobj = os.open(name, self.mode)
-    print("Opened file %s" % name)
 
   def insert_at(self, startpos, data):
     if isinstance(data, str):
@@ -32,6 +27,9 @@ class File(object):
   def read_from(self, startpos, num):
     os.lseek(self.fobj, startpos, os.SEEK_SET)
     return os.read(self.fobj, num)
+
+  def get_name(self):
+    return self.name
 
   def read(self):
     return open(self.name).read()

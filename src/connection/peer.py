@@ -20,17 +20,17 @@ MESSAGES = {
 }
 MSG_ID = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 MSG_NAME = ["keep-alive", "choke", "unchoke", "interested", "not interested", "request", "piece", "cancel", "port"]
-MAX_REQUESTS = 15  # max 5 pieces per peer
 REQUEST_SIZE = 2**14
 
 #TODO: Ideally, Peer class should have a Protocol object, which would be a 
 #TCP/UDP/uTP wrapper depending on settings.
 
 class Peer(asyncore.dispatcher):
-  def __init__(self, peer_info, session_data):
+  def __init__(self, peer_info, session_data, max_requests = 1):
     '''Initialize a peer object given a dictionary with port and ip as well as a
     handshake and info_hash'''
     asyncore.dispatcher.__init__(self)
+    self.peer_info = (peer_info['ip'], int(peer_info['port']))
     self.ipaddr, self.port = peer_info['ip'], int(peer_info['port'])
     self.handshake, self.info_hash = session_data['handshake'], session_data['info_hash']
     self.log = bitlog.log()
@@ -45,14 +45,16 @@ class Peer(asyncore.dispatcher):
     self.choked = True
     self.is_interested = False
     self.interested = False
+    self.max_requests = max_requests
+    self.log.debug("Connecting %s:%s" % self.peer_info)
     try:
-      self.connect((self.ipaddr, self.port))
+      self.connect(self.peer_info)
     except (ConnectionRefusedError, OSError) as e:
       self.disconnect()
     self.pending_requests = 0
     self.bitfield = {}
     self.block = []
-    self.piece_buffer = []  # pending
+    self.piece_buffer = {}  # pending
     self.piece_completed = [] # done
 
   def handle_read(self):
@@ -61,7 +63,7 @@ class Peer(asyncore.dispatcher):
       if r:
         self.parse_message(r)
     except (ConnectionRefusedError, OSError) as e:
-      self.log.warn("Connection refused: %s:%s" % (self.ipaddr, self.port))
+      self.log.warn("Connection refused: %s:%s" % self.peer_info)
       self.disconnect()
 
   def handle_write(self):
@@ -76,13 +78,13 @@ class Peer(asyncore.dispatcher):
 
   def handle_connect(self):
     if not self.handshaked:
-      try:
-        self.shake_hand()
-      except ConnectionRefusedError:
-        self.disconnect()
+      self.shake_hand()
 
   def handle_close(self):
     self.disconnect()
+
+#  def handle_error(self):
+#    pass
 
   def disconnect(self):
     '''Disconnect from peer and remove OK status'''
@@ -117,7 +119,7 @@ class Peer(asyncore.dispatcher):
       return t
   def can_request(self):
     '''Whether we've maxed out the number of requests per peer'''
-    return self.connected and self.handshaked and self.sent_prepare and self.interested and not self.choked and self.pending_requests < MAX_REQUESTS
+    return self.connected and self.handshaked and self.sent_prepare and self.interested and not self.choked and self.pending_requests < self.max_requests
 
   def good_status(self):
     '''Whether connection is ok, peer is interested and not choked'''
@@ -129,18 +131,33 @@ class Peer(asyncore.dispatcher):
 
   def request_piece(self, piece_index, piece_size):
     '''Request this piece from the peer'''
-    if not [f for f in self.piece_buffer if f['index'] == int(piece_index)]:
-      self.pending_requests+=1
-      self.piece_buffer.append({"index": int(piece_index), "size": int(piece_size), "data": []})
-      last_block_num = piece_size / REQUEST_SIZE
+    piece_index, piece_size = int(piece_index), int(piece_size)
+#    self.log.debug("Requesting piece %s" % piece_index)
+    if piece_index not in self.piece_buffer:
+#      self.log.debug("Adding request to queue")
+#    if not [f for f in self.piece_buffer if f['index'] == piece_index]:
+      self.pending_requests += 1
       last_block_size = piece_size % REQUEST_SIZE
+      last_block_index = int(piece_size / REQUEST_SIZE)
+      if last_block_size:
+        last_block_index += 1
+#      self.piece_buffer.append({"index": piece_index, "size": piece_size, "data": [b"" for block in range(0, last_block_index)]})
+      self.piece_buffer[piece_index] = {"size": piece_size, "data": {}, "index": piece_index}
+      total = 0
       for i in range(0, piece_size, REQUEST_SIZE):
-        if last_block_size:
-          if i == last_block_num:
-            self.add_to_buffer(self.get_message("request") + struct.pack("!III", int(piece_index), int(i/REQUEST_SIZE), last_block_size))
+#      for i in range(0, last_block_index):
+        if last_block_size: # irregular last block
+          if int(i/REQUEST_SIZE) == last_block_index - 1:
+            self.add_to_buffer(self.get_message("request") + struct.pack("!III", piece_index, i, last_block_size))
+#            self.log.debug("Requesting piece %s, block %s, size: %s" % (piece_index, i, last_block_size))
+            total += last_block_size
             break
-        self.add_to_buffer(self.get_message("request") + struct.pack("!III", int(piece_index), int(i/REQUEST_SIZE), REQUEST_SIZE))
-      self.log.info("Requesting piece: %s\tNumber of blocks: %s\tTotal: %s\tPeer: %s:%s" % (piece_index, last_block_num, piece_size, self.ipaddr, self.port))
+#        self.log.debug("Requesting piece %s, block %s, size: %s" % (piece_index, i, REQUEST_SIZE))
+        self.add_to_buffer(self.get_message("request") + struct.pack("!III", piece_index, i, REQUEST_SIZE))
+        total += REQUEST_SIZE
+      if total != piece_size:
+        self.log.debug("Incorrect piece breakdown. Piece size: %s. Requested piece size: %s" % (piece_size, total))
+        sys.exit(0)
 
   def has_piece(self, piece_index):
     '''Whether this peer has announced having this piece'''
@@ -157,82 +174,103 @@ class Peer(asyncore.dispatcher):
 
   def parse_message(self, message):
     '''Given a peer's output'''
-    if self.lastcall:
-      if len(self.lastcall) == len(message):
-        self.log.warning("Possible duplication -- lastcall, message")
-        if message == self.lastcall:
-          self.log.critical("Duplication confirmed, fix ASAP")
-          self.log.critical("%s\n%s" % (self.lastcall, message))
-      message = b''.join(a for a in [self.lastcall, message])
-      self.lastcall = b''
+    # Let's not waste time
     if len(message) == 0:
       self.log.warn("Received empty message")
       return
+    # If there's a previously incomplete message, let's prepend it
+    if self.lastcall:
+      if len(self.lastcall) == len(message):
+        if message == self.lastcall:
+          self.log.critical("Duplication confirmed, fix ASAP")
+          self.log.critical("%s\n%s" % (self.lastcall, message))
+      message = b''.join([self.lastcall, message])
+#      self.log.debug("Joining incoming message with previous incomplete message")
+      self.lastcall = b''
+    # A handshake was received, outside of this function's scope
     if message[1:20].lower() == b"bittorrent protocol":
       self.process_handshake(message)
       return
-    elif len(message) < 4:
-      self.lastcall = message
+    # Not even the full id was received. wth?
+    # Most likely we should append to whatever is in lastcall
+    if len(message) < 4:
+#      self.log.debug("Message less than 4: %s" % message)
+#      self.log.debug("Lastcall: %s" % self.lastcall[:100])
+#      sys.exit(0)
+#      self.lastcall = b''.join(a for a in [self.lastcall, message])
+#      self.lastcall = message
       return
-    prefix = message[:4]
-    msg_len = 0
-    try:
-      msg_len = struct.unpack('!I', prefix)[0]
-    except struct.error:
-      self.log.error("Attempted to unpack: %s\n\tFull message: %s" % (prefix, message))
-      self.log.error(traceback.print_last())
-      sys.exit(1)
-    if len(message[4:]) != msg_len:
-      if len(message[4:]) < msg_len:  # incomplete message, let's wait
-        self.lastcall = message
-      elif len(message[4:]) > msg_len:  # serial message, de-serialize
-        self.parse_message(message[:msg_len+4])
-        self.parse_message(message[msg_len+4:])
-      return
-    if msg_len == 0:  # keep alive
-      self.status_ok == True
     else:
-      msg_id = ord(message[4:5])  # TODO: Is this bulletproof?
-      if msg_id == 0:
-        self.log.debug("We have been choked %s:%s" % (self.ipaddr, self.port))
-        self.choked = True
-        sys.exit(0)
-      elif msg_id == 1:
-        self.log.debug("We have been unchoked %s:%s" % (self.ipaddr, self.port))
-        self.choked = False
-      elif msg_id == 2:
-        self.log.debug("Peer is interested")
-        self.is_interested = True
-      elif msg_id == 3:
-        self.log.debug("Peer is not interested")
-        self.is_interested = False
-      elif msg_id == 4:
-        self.update_bitfield_with_have(message[5:])
-      elif msg_id == 5:
-        self.update_bitfield(message[5:])
-        if not self.sent_prepare:
-          self.prepare_peer()
-      elif msg_id == 7:
-        self.process_block(message[5:])
-      elif msg_id == 8:
-        self.log.debug("Peer is requesting cancellation %s " % message[5:])
-        sys.exit(1)
-      elif msg_id == 9:
-        print("Peer is advicing on port: %s " % message[5:])
+      prefix = message[:4]
+      msg_len = struct.unpack("!I", prefix)[0]
+#      try:
+#        msg_len = struct.unpack('!I', prefix)[0]
+#      except struct.error:
+#        self.log.error("Attempted to unpack: %s\n\tFull message: %s" % (prefix, message))
+#        self.log.error(traceback.print_last())
+#        sys.exit(1)
+      if len(message[4:]) != msg_len:
+        if len(message[4:]) < msg_len:  # incomplete message, let's wait
+          self.lastcall = b''.join([self.lastcall, message])
+#          self.log.debug("Incoming message was less than expected length")
+#          self.log.debug("Expected: %s. Received: %s" % (msg_len, len(message[4:])))
+#          self.log.debug(message)
+#          self.log.debug(self.lastcall)
+#          sys.exit(0)
+  #        self.lastcall = message
+        elif len(message[4:]) > msg_len:  # serial message, de-serialize
+#          self.lastcall = b"" # TODO: testing this
+#          self.log.debug("De-serializing: " % message[:12])
+          self.parse_message(message[:msg_len+4])
+          self.parse_message(message[msg_len+4:])
+        return
+      if msg_len == 0:  # keep alive
+        self.status_ok == True
       else:
-        self.log.critical("invalid tcp msg rcvd - malicious or ignorant, equally dangerous")
-        self.log.critical("msg id : %s\tLen: %s\tPeer: %s:%s " % (msg_id, msg_len, self.ipaddr, self.port))
-        self.log.critical(message)
-        self.disconnect()
+        msg_id = ord(message[4:5])  # TODO: Is this bulletproof?
+        if msg_id == 0:
+          self.log.debug("We have been choked %s:%s" % self.peer_info)
+          self.choked = True
+          self.disconnect()
+  #        sys.exit(0)
+        elif msg_id == 1:
+          self.log.debug("We have been unchoked %s:%s" % self.peer_info)
+          self.choked = False
+        elif msg_id == 2:
+          self.log.debug("Peer is interested %s:%s" % self.peer_info)
+          self.is_interested = True
+        elif msg_id == 3:
+          self.log.debug("Peer is not interested")
+          self.is_interested = False
+        elif msg_id == 4:
+          self.update_bitfield_with_have(message[5:])
+        elif msg_id == 5:
+          self.update_bitfield(message[5:])
+          if not self.sent_prepare:
+            self.prepare_peer()
+        elif msg_id == 7:
+          self.process_block(message[5:])
+        elif msg_id == 8:
+          self.log.debug("Peer is requesting cancellation %s " % message[5:])
+          sys.exit(1)
+        elif msg_id == 9:
+          print("Peer is advicing on port: %s " % message[5:])
+          self.disconnect()
+        else:
+          self.log.critical("invalid tcp msg rcvd - malicious or ignorant, equally dangerous")
+          self.log.critical("msg id : %s\tLen: %s\tPeer: %s:%s " % (msg_id, msg_len, self.ipaddr, self.port))
+          self.log.critical(message)
+          self.disconnect()
 
   def process_block(self, b):
     '''Add block to piece buffer'''
-    index, begin, block = struct.unpack("!I", b[:4])[0], struct.unpack("!I", b[4:8])[0], b[8:]
-    for p in [a for a in self.piece_buffer if a['index'] == index]:  # piece
-      p['data'].insert(index, block)
-      if len(b''.join([j for j in p['data']])) == p['size']:
-        self.piece_completed.append({"index": index, "data": b''.join([k for k in p['data']])})
-        self.piece_buffer.remove([a for a in self.piece_buffer if a['index'] == index][0])
+    (piece_index, block_offset), data = struct.unpack("!II", b[:8]), b[8:]
+    # TODO: Is this list comprehension the shortest it can be?
+    self.piece_buffer[piece_index]['data'][block_offset] = data
+    if len(b''.join(self.piece_buffer[piece_index]['data'].values())) == self.piece_buffer[piece_index]['size']:
+        self.piece_completed.append({"index": piece_index, 
+          "data": b''.join([self.piece_buffer[piece_index]['data'][j] for j in sorted(self.piece_buffer[piece_index]['data'].keys())])})
+        del self.piece_buffer[piece_index]
         self.pending_requests -= 1
 
   def has_complete_pieces(self):
@@ -248,13 +286,17 @@ class Peer(asyncore.dispatcher):
   def update_bitfield_with_have(self, have):
     '''Maps a have message to the bitfield'''
     self.bitfield[struct.unpack("!I", have)[0]] = True
-    
 
   def update_bitfield(self, bf):
     '''Handle the contents of a bitfield message'''
-    for b in [i for i in enumerate(bf)]:
-      if b[1] == 255:
-        self.bitfield[b[0]] = True
+    self.log.debug("Received bitfield %s:%s" % self.peer_info)
+    for i, byte in enumerate(bf):
+      for j, bit in enumerate(self.unparse_bitfield(byte)):
+        self.bitfield[i*8 + j] = bool(int(bit))
+
+  def unparse_bitfield(self, byte):
+    '''Return a len-8 string representing a given byte value in binary'''
+    return (bin(byte)[2:]+"0"*8)[:8]
 
   def shake_hand(self):
     '''Send our handshake to the peer'''
@@ -271,9 +313,9 @@ class Peer(asyncore.dispatcher):
       self.handshaked = True
       self.lastcall = reply[reply_len:]
     else:
-      self.log.warn("Incomplete handshake received %s:%s" % (self.ipaddr, self.port))
+      self.log.warn("Incomplete handshake received %s:%s" % self.peer_info)
       self.disconnect()
-    self.log.info("Handshake with %s:%s successful." % (self.ipaddr, self.port))
+    self.log.info("Handshake with %s:%s successful." % self.peer_info)
 
   def prepare_peer(self):
     '''Send interested + unchoke message'''
@@ -289,6 +331,6 @@ class Peer(asyncore.dispatcher):
 
   @staticmethod
   def loop():
-    asyncore.loop(30.0, False, None, 1000)
+    asyncore.loop(30.0, False, None, 10000)
 asyncore.loop()
 

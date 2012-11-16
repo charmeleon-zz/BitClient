@@ -21,7 +21,7 @@ class Tracker(object):
     self.port = 0 if self.p.port is None else self.p.port
     self.timeout = False  # if the tracker misbehaves, have it sit in a corner
     self.timeouts = 0 # num of times we have requested tracker and it has been out
-    self.refresh = None
+    self.refresh = 0
     self.timer = time.time()
 
   def announce(self,query_string):
@@ -32,6 +32,7 @@ class Tracker(object):
     try:
       print("URL: %s?%s"%(self.tracker_url,newp.query))
       rawreply = urlopen("%s?%s"%(self.tracker_url,newp.query)).read().decode("latin1") # bencoded reply
+      self.timer = time.time()
       return self.get_peer_list(rawreply)
     except (ConnectionRefusedError, URLError) as e:
       print("An error ocurred when connecting to host %s: %s. Trying again in %ds"%(self.host,e,TRACKER_TIMEOUT))
@@ -40,19 +41,17 @@ class Tracker(object):
       pass
 
   def can_reannounce(self):
-    return bool(self.refresh is None or (time.time()-self.timer)>=self.refresh)
+    return bool(self.refresh == 0 or (time.time()-self.timer)>=self.refresh)
 
   def is_available(self):
     return bool(self.timeout==False or 
                   (self.timeout==True and math.floor(time.time()-self.timer)>=TRACKER_TIMEOUT and self.timeouts<MAX_FAILURE))
 
-  def reannounce(self):
-    '''Re-announce'''
-
   def get_peer_list(self,raw_reply):
     '''Returns dictionary of peers with ip,port keys'''
     response = bdecoder.decode(raw_reply) # decode
-    self.refresh = response['interval']
+    if not self.refresh:
+      self.refresh = response['interval']
     if 'peers' not in response:
       print("Peer list from tracker is empty. ",end="")
       if 'failure reason' in response:
