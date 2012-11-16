@@ -57,13 +57,8 @@ class Torrent(object):
     self.runtime = time.time()
 
   def torrent(self):
-#    stdscr = curses.initscr()
-#    curses.noecho()
-#    stdscr.keypad(1)
     stop = False
     pieces_left = 0
-#    begin_x = 20; begin_y = 7; height = 1; width = 80
-#    cur = curses.newwin(height, width, begin_y, begin_x)
     while not stop:
       debug_flase = False
       self.update_peers(self.query_trackers())
@@ -108,8 +103,6 @@ class Torrent(object):
 #      self.log.debug("Piece begin: %s" % data[:100])
 #      self.log.debug("Piece end: %s" % data[-100:])
 #      sys.exit(0)
-#    else:
-#      self.log.debug("Piece %s checks out OK" % piece_index)
     return sha(data).digest() == self.pieces[piece_index]['hash']
 
   def write_to_temp(self, piece_index, data):
@@ -139,13 +132,12 @@ class Torrent(object):
           total += tmp
           tmp = 0
     self.log.debug("Done parsing files. Exiting BitClient")
-#    curses.nobreak(); curses.echo(); curses.endwin()
+    # TODO: Erase .part file
     sys.exit(0)
 
   def write_piece(self, piece_index, data, offset = 0):
     '''Allocates the piece to the appropriate file(s), as they come in'''
     # NOTE: Work in progress, does NOT work in its current state
-    # TODO: Hash check before writing
     piece_pos = piece_index * self.piece_size
     total = offset
     for fileinfo in self.partfiledata:
@@ -273,7 +265,7 @@ class Torrent(object):
       "info_hash": parse.quote(self.info_hash), "peer_id": parse.quote(self.peerid),
       "port":51413,
       "uploaded":0,   #TODO: uploaded = ? NOTE: can only keep track for sesh
-      "downloaded": self.downloaded, #TODO: Is this working? Debug
+      "downloaded": self.downloaded,
       "left": self._get_left(),
       "event": "started",
       "compact": COMPACT
@@ -355,7 +347,7 @@ class Torrent(object):
       "priority": 0,  "written": False,
       "attempts": 0}
        for i in range(0, len(current_map), piece_length)]
-#   piece_map: hash | have | requested | priority | attempts  | index | file
+#   piece_map: hash | have | requested | priority | attempts
     calc_total = len(self.pieces) * self.piece_size
     overage = calc_total - self.total_size
     if overage:
@@ -369,6 +361,7 @@ class Torrent(object):
 
   def update_map(self):
     '''Check existing filedata, if any, and confirm its integrity'''
+    # TODO: Needs serious cleanup
     self.log.debug("Number of pieces: %s" % len(self.pieces))
     # Beginning from piece 0
     totaldata = 0
@@ -414,8 +407,6 @@ class Torrent(object):
           else:
             leftover = fileinfo['file'].read_from(i, fileinfo['length'] - i)
     self.log.debug("Starting with %s pieces" % len([n for n in self.pieces if n['have']]))
-#    self.log.debug(self.pieces)
-    # Alternatively, from the first file
 
   def get_handshake(self):
     '''A method for a handshake. Since peer_id constantly changes, it's best

@@ -31,7 +31,6 @@ class Peer(asyncore.dispatcher):
     handshake and info_hash'''
     asyncore.dispatcher.__init__(self)
     self.peer_info = (peer_info['ip'], int(peer_info['port']))
-    self.ipaddr, self.port = peer_info['ip'], int(peer_info['port'])
     self.handshake, self.info_hash = session_data['handshake'], session_data['info_hash']
     self.log = bitlog.log()
     self.create_socket()
@@ -132,27 +131,20 @@ class Peer(asyncore.dispatcher):
   def request_piece(self, piece_index, piece_size):
     '''Request this piece from the peer'''
     piece_index, piece_size = int(piece_index), int(piece_size)
-#    self.log.debug("Requesting piece %s" % piece_index)
     if piece_index not in self.piece_buffer:
-#      self.log.debug("Adding request to queue")
-#    if not [f for f in self.piece_buffer if f['index'] == piece_index]:
       self.pending_requests += 1
       last_block_size = piece_size % REQUEST_SIZE
       last_block_index = int(piece_size / REQUEST_SIZE)
       if last_block_size:
         last_block_index += 1
-#      self.piece_buffer.append({"index": piece_index, "size": piece_size, "data": [b"" for block in range(0, last_block_index)]})
       self.piece_buffer[piece_index] = {"size": piece_size, "data": {}, "index": piece_index}
       total = 0
       for i in range(0, piece_size, REQUEST_SIZE):
-#      for i in range(0, last_block_index):
         if last_block_size: # irregular last block
           if int(i/REQUEST_SIZE) == last_block_index - 1:
             self.add_to_buffer(self.get_message("request") + struct.pack("!III", piece_index, i, last_block_size))
-#            self.log.debug("Requesting piece %s, block %s, size: %s" % (piece_index, i, last_block_size))
             total += last_block_size
             break
-#        self.log.debug("Requesting piece %s, block %s, size: %s" % (piece_index, i, REQUEST_SIZE))
         self.add_to_buffer(self.get_message("request") + struct.pack("!III", piece_index, i, REQUEST_SIZE))
         total += REQUEST_SIZE
       if total != piece_size:
@@ -185,42 +177,22 @@ class Peer(asyncore.dispatcher):
           self.log.critical("Duplication confirmed, fix ASAP")
           self.log.critical("%s\n%s" % (self.lastcall, message))
       message = b''.join([self.lastcall, message])
-#      self.log.debug("Joining incoming message with previous incomplete message")
       self.lastcall = b''
     # A handshake was received, outside of this function's scope
     if message[1:20].lower() == b"bittorrent protocol":
       self.process_handshake(message)
       return
-    # Not even the full id was received. wth?
-    # Most likely we should append to whatever is in lastcall
+    # Most likely we should append to whatever is in lastcall?
     if len(message) < 4:
-#      self.log.debug("Message less than 4: %s" % message)
-#      self.log.debug("Lastcall: %s" % self.lastcall[:100])
-#      sys.exit(0)
-#      self.lastcall = b''.join(a for a in [self.lastcall, message])
-#      self.lastcall = message
+      self.lastcall = b''.join(a for a in [self.lastcall, message])
       return
     else:
       prefix = message[:4]
       msg_len = struct.unpack("!I", prefix)[0]
-#      try:
-#        msg_len = struct.unpack('!I', prefix)[0]
-#      except struct.error:
-#        self.log.error("Attempted to unpack: %s\n\tFull message: %s" % (prefix, message))
-#        self.log.error(traceback.print_last())
-#        sys.exit(1)
       if len(message[4:]) != msg_len:
         if len(message[4:]) < msg_len:  # incomplete message, let's wait
           self.lastcall = b''.join([self.lastcall, message])
-#          self.log.debug("Incoming message was less than expected length")
-#          self.log.debug("Expected: %s. Received: %s" % (msg_len, len(message[4:])))
-#          self.log.debug(message)
-#          self.log.debug(self.lastcall)
-#          sys.exit(0)
-  #        self.lastcall = message
         elif len(message[4:]) > msg_len:  # serial message, de-serialize
-#          self.lastcall = b"" # TODO: testing this
-#          self.log.debug("De-serializing: " % message[:12])
           self.parse_message(message[:msg_len+4])
           self.parse_message(message[msg_len+4:])
         return
@@ -258,14 +230,14 @@ class Peer(asyncore.dispatcher):
           self.disconnect()
         else:
           self.log.critical("invalid tcp msg rcvd - malicious or ignorant, equally dangerous")
-          self.log.critical("msg id : %s\tLen: %s\tPeer: %s:%s " % (msg_id, msg_len, self.ipaddr, self.port))
+          self.log.critical("msg id : %s\tLen: %s\tPeer: %s:%s " % (msg_id, msg_len, self.peer_info))
           self.log.critical(message)
           self.disconnect()
 
   def process_block(self, b):
     '''Add block to piece buffer'''
     (piece_index, block_offset), data = struct.unpack("!II", b[:8]), b[8:]
-    # TODO: Is this list comprehension the shortest it can be?
+    # TODO: This seems convoluted
     self.piece_buffer[piece_index]['data'][block_offset] = data
     if len(b''.join(self.piece_buffer[piece_index]['data'].values())) == self.piece_buffer[piece_index]['size']:
         self.piece_completed.append({"index": piece_index, 
