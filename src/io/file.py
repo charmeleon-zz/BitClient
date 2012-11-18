@@ -16,6 +16,9 @@ class File(object):
       self.mode = os.O_WRONLY|os.O_CREAT
     elif mode == File.READONLY:
       self.mode = os.O_RDONLY|os.O_CREAT
+    path = os.path.dirname(name)
+    if not os.path.exists(path):
+      os.makedirs(path)
     self.fobj = os.open(name, self.mode)
 
   def insert_at(self, startpos, data):
