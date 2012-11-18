@@ -11,7 +11,7 @@ The script will look for any .torrent file under the torrents/ folder and begin 
 ## TODO
 ### Functional
 * ~~Set 'rate' modifier to update only the last line in terminal buffer~~
-* Write pieces directly to file\(s\) \(get rid of .part files\)
+* ~~Write pieces directly to file\(s\) \(get rid of .part files\)~~
 * Send Bitfield and have messages
 * Accept incoming requests, send pieces as requested
 * Implement torrenting Strategies
@@ -19,4 +19,4 @@ The script will look for any .torrent file under the torrents/ folder and begin 
 
 ### UI
 * ~~ Turn off logging to buffer \(except critical\)~~
-* Show persistent D/U speed as a single line~~
+* ~~Show persistent D/U speed as a single line~~

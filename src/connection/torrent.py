@@ -28,6 +28,7 @@ class Torrent(object):
     self.filepath = os.path.dirname(self.filename)
     self.torrentname = self.filename[len(self.filepath):]
     self.total_size = 0
+    self.left = 0
     self.metainfo_data = self.read_torrent_file(filename)
 #    if 'encoding' in self.metainfo_data:
 #      self.log.warn("Attention: Torrent has specified encoding")
@@ -47,26 +48,23 @@ class Torrent(object):
     self.info_hash = self.get_info_hash(self.info)
     self.trackers = {};self.parse_trackers(self.metainfo_data)
     self.pieces = []; self.map_pieces(self.info['pieces'])
-    self.truncate = self.total_size - len(self.pieces) * self.piece_size
     self.peers = [] # Peer objects
     self.backup_peers = [] # list of {ip:,port:} dicts for backup
-    self.temp_file = File(self.filename.replace(".torrent", ".part"))
     self.uploaded = 0
     self.finished = False
     self.downloaded = 0
+    self.pieces_left = 0
     self.runtime = time.time()
+    self.shutdown = False
 
   def torrent(self):
-    stop = False
-    pieces_left = 0
-    while not stop:
-      debug_flase = False
+    while not self.shutdown:
+      self.pieces_left = len([m for m in self.pieces if not m['have']])
       self.update_peers(self.query_trackers())
-      pieces_left = len([m for m in self.pieces if not m['have']])
       # Check whether we still have pieces left to send
-      if not pieces_left:
+      if not self.pieces_left:
         self.log.debug("Download completed, cleaning up...")
-        self.extract_from_temp()
+        sys.exit(0)
       for peer_index, peer in enumerate(self.peers):
         # Process requests
         # TODO: Work on strategy for pieces that need be requested multiple times
@@ -79,13 +77,13 @@ class Torrent(object):
         # Process completed pieces
         if peer.has_complete_pieces():
           sys.stdout.write("\r%s/%s ({0:.2f}%%) pieces downloaded. Rate: %s/s".
-            format((len(self.pieces) - pieces_left)/len(self.pieces)*100) %
-            (len(self.pieces) - pieces_left, len(self.pieces), 
+            format((len(self.pieces) - self.pieces_left)/len(self.pieces)*100) %
+            (len(self.pieces) - self.pieces_left, len(self.pieces), 
             strmanip.parse_filesize(self.downloaded/(time.time() - self.runtime), 1000)))
           sys.stdout.flush()
           for piece in peer.complete_pieces():
             if self.check_piece(piece['index'], piece['data']):
-              self.write_to_temp(piece['index'], piece['data'])
+              self.write_piece(piece['index'], piece['data'])
             else:
               self.log.warn("Piece hash FAILED. Index: %s" % piece['index'])
               self.pieces[piece['index']]['requested'] = False
@@ -96,93 +94,20 @@ class Torrent(object):
 
   def check_piece(self, piece_index, data):
     '''Hash-check a given piece'''
-#    if sha(data).digest() != self.pieces[piece_index]['hash']:
-#      if piece_index < 5:
-#        self.log.debug("Piece: %s" % piece_index)
-#        self.log.debug(sha(data).digest())
-#        self.log.debug(self.pieces[piece_index]['hash'])
-#        self.log.debug("Piece length: %s\tExpected length: %s\tNum: %s" 
-#            % (len(data), self.pieces[piece_index].get('size', self.piece_size), piece_index))
-#      self.log.debug("Piece begin: %s" % data[:100])
-#      self.log.debug("Piece end: %s" % data[-100:])
-#      sys.exit(0)
     return sha(data).digest() == self.pieces[piece_index]['hash']
 
-  def write_to_temp(self, piece_index, data):
-    if not self.pieces[piece_index]['have']:
-      self.temp_file.insert_at(piece_index * self.piece_size, data)
-      self.pieces[piece_index]['have'] = True
-      self.downloaded += len(data)
-
-  def extract_from_temp(self):
-    '''Extract the binary data from a single .part file and parse it to multiple
-    files'''
-    self.log.debug("Extracting from temp")
-    total = 0
-    for fileinfo in self.partfiledata:
-      self.log.debug("Writing %s" % fileinfo['name'])
-      # to avoid running out of RAM, let's not write more than 512MiB at a time
-      if fileinfo['length'] <= 2**29:
-        fileinfo['file'].insert_at(0, self.temp_file.read_from(total, fileinfo['length']))
-        total += fileinfo['length']
-      else:
-        tmp = fileinfo['length']
-        while tmp > 2**29:
-          fileinfo['file'].insert_at(0, self.temp_file.read_from(total, 2**29))
-          total += 2**29
-        if tmp:
-          fileinfo['file'].insert_at(0, self.temp_file.read_from(total, tmp))
-          total += tmp
-          tmp = 0
-    self.log.debug("Done parsing files. Exiting BitClient")
-    # TODO: Erase .part file
-    sys.exit(0)
-
-  def write_piece(self, piece_index, data, offset = 0):
-    '''Allocates the piece to the appropriate file(s), as they come in'''
-    # NOTE: Work in progress, does NOT work in its current state
-    piece_pos = piece_index * self.piece_size
-    total = offset
-    for fileinfo in self.partfiledata:
-      # Piece corresponds to this file
-      if piece_pos <= total + fileinfo['length']:
-        # Inserting this piece as-is will not exceed length of file
-        if fileinfo['length'] >= piece_pos - total + len(data):
-          fileinfo['file'].insert_at(pos - total, data)
-          self.log.debug("Writing piece %s to file %s" % (piece_index, fileinfo['file'].get_name()))
-          break
-        # Inserting this piece exceeds file boundaries...
-        else:
-          # ...because this is the last piece and we are supposed to truncate it
-          if self.truncate and piece_index == len(self.pieces) - 1:
-            fileinfo['file'].insert_at(pos - total, data[:self.truncate])
-          # ...because the pice is bigger than the file to begin with
-          elif len(data) > fileinfo['length']:
-            fileinfo['file'].insert_at(pos - total, data[:fileinfo['length']])
-            self.write_piece(piece_index, data[fileinfo['length']:])
-          # The data that we have, by itself, is bigger than the file
-          elif len(data) > fileinfo['length']:
-            if self.truncate and piece_index == len(self.pieces) - 1:  # indeed, last piece
-              self.log.debug("Writing last piece to file %s" % fileinfo['file'].get_name())
-              fileinfo['file'].insert_at(pos - total, data[:self.truncate])
-              sys.exit(0)
-            else:
-              fileinfo['file'].insert_at(pos - total, data[:fileinfo['length']])
-              sys.exit(0)
-          # Either the piece overlaps, or this is the last piece and we should truncate
-          else:
-            fileinfo['file'].insert_at(pos - total, data[:pos - total + fileinfo['length']])
-            self.log.critical("File: %s" % fileinfo['file'].get_name())
-            self.log.critical("Current piece exceeds file length. Piece: %s" % piece_index)
-            self.log.critical("Filename: %s" % fileinfo['name'])
-            self.log.critical("File length: %s. Offset: %s. Piece size: %s" % (fileinfo['length'], pos - total, len(data)))
-            self.log.critical("Attempted insert of %s bytes" % (pos - total + fileinfo['length']))
-            sys.exit(0)
-      # Piece belongs elsewhere, keep going
-      else:
-        total += fileinfo['length']
+  def write_piece(self, piece_index, data):
+    '''Given a piece index and its data, insert it to its corresponding file(s)
+    This function does NOT perform a hash check'''
+    prev_len = 0
+    for fobj, offset, chunk_length in self.piece_info(piece_index):
+      fobj.insert_at(offset, data[prev_len:prev_len + chunk_length])
+      prev_len += chunk_length
+    self.pieces[piece_index]['have'] = True
+    self.downloaded += len(data)
 
   def has_good_status(self):
+    '''Boolean flag indicating whether the torrent can stay in the queue'''
     return self.good_status
 
   def read_torrent_file(self, filename):
@@ -193,8 +118,7 @@ class Torrent(object):
         return bdecoder.decode(localized_file.read().decode("latin1"))
     except IOError as e:
       print("File ",filename," could not be found")
-      sys.exit(2)
-      # TODO: bump the error upwards and catch in client, remove from queue
+      self.good_status = False
 
   def parse_partfile_data(self, path, name, args):
     '''Return the name of the partfile for this torrent'''
@@ -207,42 +131,44 @@ class Torrent(object):
       print("Received unrecognized args:\n\t%r\n\ttype: %s"%(args,type(args)))
       sys.exit(2)
 
+    # TODO: properly implement 'completed' flag for each file
     if isinstance(args, int):
-      return [{"name":name, "fullpath": self.pathify_file(path, name),"length": args, 
-        "completed": self.completed_status(self.pathify_file(path, name), args), "lower": 0, "file": File(self.pathify_file(path, name))}]
+      return [{"name": name, "fullpath": self.pathify_file(path, name),"length": args, 
+        "file": File(self.pathify_file(path, name))}]
     elif isinstance(args, list):
       if name:
         self.filepath = os.path.join(self.filepath, name)
         path = os.path.join(path, name)
-        if not os.path.exists(path):
-          os.makedirs(path)
         self.log.debug("New path: %s" % path)
       return [{"name": f['path'], "fullpath": self.pathify_file(path, f['path']),
         "length": f['length'], 
-        "completed": self.completed_status(self.pathify_file(path, f['path']), f['length']),
-        "file": File(self.pathify_file(path, f['path']))} for f in args]
+        "file": File(self.pathify_file(path, f['path']))
+        } for f in args]
     else:
-      print("arg of type: %s"%type(args))
+      print("arg of type: %s" % type(args))
       raise TypeError("torrent file must end in .torrent, given %s which ends with %s"
         %(self.filename, os.path.split(self.filename)[-1]))
 
   def pathify_file(self, path, filename):
     '''Locate a part file in the given path. If an existing file is not found
     return a file with a .part extension'''
-    if isinstance(filename, list) and len(filename)==1:
-      filename = filename[0]
+    if isinstance(filename, list):
+      if len(filename) == 1:
+        filename = filename[0]
+      elif len(filename) == 2:
+        filename = os.path.join(filename[0], filename[1])
     elif isinstance(filename, str):
       pass
     else:
       self.log.critical("An error occurred when parsing the files")
       self.log.critical("Expected: list or str. Received: %s" % type(filename))
+      self.log.debug(filename)
       sys.exit(1)
     return os.path.join(path, filename)
     
   def downloaded(self, name = ""):
     '''Return the total downloaded, which is the size of the part file'''
     return self.downloaded
-#    return 0
 
   def parse_trackers(self, metainfo_data):
     '''Populate the list of http trackers'''
@@ -263,14 +189,13 @@ class Torrent(object):
 
   def get_announce_string(self):
     '''Returns announce string in accordance to BitTorrent's HTTP specification'''
-    # create url string
     params = { 
       "info_hash": parse.quote(self.info_hash), "peer_id": parse.quote(self.peerid),
-      "port":51413,
-      "uploaded":0,   #TODO: uploaded = ? NOTE: can only keep track for sesh
+      "port": 51413,  # TODO: Decide on a different port
+      "uploaded": 0,   #TODO: uploaded = ? NOTE: can only keep track for sesh
       "downloaded": self.downloaded,
-      "left": self._get_left(),
-      "event": "started",
+      "left": self.pieces_left * self.piece_size,
+      "event": self.event(),
       "compact": COMPACT
 #      "numwant":MAX_PEERS - len(self.peers),
     }
@@ -281,11 +206,18 @@ class Torrent(object):
       url+='%s=%s&'%(key,value)
     return url[:-1]
 
+  def event(self):
+    '''Determine "event" value to be sent to tracker(s)'''
+    if self.shutdown:
+      return "stopped"
+    else:
+      return "started"
+
   # TODO: Make property -- info_hash is constant
   def get_info_hash(self,info_key):
     '''Returns a binary string of a sha1 hash'''
     return sha(bencoder.encode(info_key).encode("latin-1")).digest()
-  
+
   # TODO: Property
   def get_peer_id(self):
     '''Return a pseudo-random peer id'''
@@ -304,10 +236,6 @@ class Torrent(object):
       else:
         continue
     return addtl_peers
-
-  def _get_left(self):
-    '''How much is left to download, in bytes'''
-    return self.total_size-self.downloaded
 
   def update_peers(self, peer_info_list):
     '''Given a list of dictionaries, update the list of peers for this torrent'''
@@ -341,16 +269,16 @@ class Torrent(object):
     return len(self.peers)
 
   def map_pieces(self, current_map):
-    '''Given the pieces string, map them 20-byte sized chunks'''
+    '''Given the pieces string, map them 20-byte sized chunks
+    The piece map contains a list of dictionaries (one per piece) each containing
+    the keys: hash | have | requested | priority | attempts'''
     piece_length = 20 # the hash is 20 bytes long
     if isinstance(current_map, str):
       current_map = current_map.encode("latin-1")
     self.pieces = [{"hash":current_map[i:i+piece_length],
       "have": False,  "requested": False, 
-      "priority": 0,  "written": False,
-      "attempts": 0}
+      "priority": 0,  "attempts": 0}
        for i in range(0, len(current_map), piece_length)]
-#   piece_map: hash | have | requested | priority | attempts
     calc_total = len(self.pieces) * self.piece_size
     overage = calc_total - self.total_size
     if overage:
@@ -359,57 +287,47 @@ class Torrent(object):
     if calc_total != self.total_size:
       self.log.critical("The pieces for the torrent were incorrectly mapped")
       sys.exit(0)
-    self.log.debug("Attempting to download: %s\t%s" %  (calc_total, strmanip.parse_filesize(calc_total, 1000)))
+    self.log.debug("Attempting to download: %s\t%s" \
+      % (calc_total, strmanip.parse_filesize(calc_total, 1000)))
     self.update_map()
 
   def update_map(self):
     '''Check existing filedata, if any, and confirm its integrity'''
-    # TODO: Needs serious cleanup
-    self.log.debug("Number of pieces: %s" % len(self.pieces))
-    # Beginning from piece 0
-    totaldata = 0
-    fileindex = 0
-    pieceindex = 0
     self.log.debug("Total size: %s. Piece size: %s" % (self.total_size, self.piece_size))
-    if os.path.exists(self.filename.replace(".torrent", ".part")):
-      f = File(self.filename.replace(".torrent", ".part"))
-      for i in range(0, self.total_size, self.piece_size):
-        pieceindex = int(i/self.piece_size)
-        self.pieces[pieceindex]['have'] = \
-          self.check_piece(pieceindex, f.read_from(i, self.piece_size))
-      f.close()
-    else:
-      leftover = b""
-      # Going through each file
-      for fileindex, fileinfo in enumerate(self.partfiledata):
-        # Jumping through the data in increments of piece_size
-        for i in range(0, fileinfo['length'], self.piece_size):
-          pieceindex = int(i/self.piece_size)
-          # If we don't exceed the file's boundary
-#          self.log.debug("Checking piece %s, file %s" % (pieceindex, fileinfo['name']))
-          if i + self.piece_size < fileinfo['length']:
-            if not leftover:
-              # check the hash directly
-              self.pieces[pieceindex]['have'] = \
-                self.check_piece(pieceindex, fileinfo['file'].read_from(i, self.piece_size))
-            else:
-              # prepend leftover and evaluate
-              self.pieces[pieceindex]['have'] = \
-                self.check_piece(pieceindex, b''.join([leftover, fileinfo['file'].read_from(i, self.piece_size - len(leftover))]))
-              leftover = b""
-          # Otherwise, if we're at the last file, we may have an irregular piece
-          elif fileindex == len(self.partfiledata) - 1:
-            if not leftover:
-              self.pieces[pieceindex]['have'] = \
-                self.check_piece(pieceindex, fileinfo['file'].read_from(i, self.piece_size))
-            else:
-              self.pieces[pieceindex]['have'] = \
-                self.check_piece(pieceindex, b''.join([leftover, fileinfo['file'].read_from(i, self.pieces[pieceindex]['size'])]))
-              leftover = b""
-          # Finally, it could just be a piece that overlaps
-          else:
-            leftover = fileinfo['file'].read_from(i, fileinfo['length'] - i)
+    for index, piece in enumerate(self.pieces):
+      piece['have'] = self.check_piece(index, b''.join(
+        [chunkfile.read_from(offset, chunklen) for chunkfile, offset, chunklen in self.piece_info(index)]))
     self.log.debug("Starting with %s pieces" % len([n for n in self.pieces if n['have']]))
+
+  def piece_info(self, pieceindex):
+    '''Returns a list of tuples containing the File object(s) this piece belongs to,
+    the beginning (within that file) where this piece belongs, and the length
+    to be inserted within each file. e.g.:
+    [(fileObj0, offset0, length0), (fileObj1, offset1, length1), ...]
+    '''
+    piece_length = self.pieces[pieceindex].get('size', self.piece_size)
+    beginning = pieceindex * self.piece_size
+    current_pos = 0 # from zeroeth file
+    pc_map = []
+    while current_pos < beginning + piece_length:
+      for fileinfo in self.partfiledata:
+        if current_pos < beginning and fileinfo['length'] + current_pos < beginning:
+          current_pos += fileinfo['length']
+          continue  # not there yet
+        elif current_pos > beginning + piece_length:
+          current_pos += fileinfo['length']
+          break # overshot, this piece is done
+        else:
+          # offset within the file, if any
+          pos = beginning - current_pos if beginning > current_pos else 0
+          if pos + piece_length <= fileinfo['length']:
+            pc_map.append((fileinfo['file'], pos, piece_length))
+            current_pos += fileinfo['length']
+          else: # appending the entirety will exceed file length
+            pc_map.append((fileinfo['file'], pos, fileinfo['length'] - pos))
+            piece_length -= fileinfo['length'] - pos
+            current_pos += pos
+    return pc_map
 
   def get_handshake(self):
     '''A method for a handshake. Since peer_id constantly changes, it's best
