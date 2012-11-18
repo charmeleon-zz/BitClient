@@ -34,7 +34,7 @@ class Tracker(object):
       rawreply = urlopen("%s?%s"%(self.tracker_url,newp.query)).read().decode("latin1") # bencoded reply
       self.timer = time.time()
       return self.get_peer_list(rawreply)
-    except (ConnectionRefusedError, URLError) as e:
+    except (ConnectionRefusedError, ConnectionResetError, URLError) as e:
       print("An error ocurred when connecting to host %s: %s. Trying again in %ds"%(self.host,e,TRACKER_TIMEOUT))
       self.timeout = True
       self.timer = time.time()
