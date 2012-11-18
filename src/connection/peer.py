@@ -82,8 +82,8 @@ class Peer(asyncore.dispatcher):
   def handle_close(self):
     self.disconnect()
 
-#  def handle_error(self):
-#    pass
+  def handle_error(self):
+    pass
 
   def disconnect(self):
     '''Disconnect from peer and remove OK status'''

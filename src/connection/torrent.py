@@ -78,8 +78,11 @@ class Torrent(object):
               piece['attempts'] += 1
         # Process completed pieces
         if peer.has_complete_pieces():
-          self.log.debug("%s/%s pieces downloaded. Rate: %s/s" %
-            (len(self.pieces) - pieces_left, len(self.pieces), strmanip.parse_filesize(self.downloaded/(time.time() - self.runtime), 1000)))
+          sys.stdout.write("\r%s/%s ({0:.2f}%%) pieces downloaded. Rate: %s/s".
+            format((len(self.pieces) - pieces_left)/len(self.pieces)*100) %
+            (len(self.pieces) - pieces_left, len(self.pieces), 
+            strmanip.parse_filesize(self.downloaded/(time.time() - self.runtime), 1000)))
+          sys.stdout.flush()
           for piece in peer.complete_pieces():
             if self.check_piece(piece['index'], piece['data']):
               self.write_to_temp(piece['index'], piece['data'])
