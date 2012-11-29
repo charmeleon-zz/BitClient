@@ -63,7 +63,7 @@ class Torrent(object):
       self.update_peers(self.query_trackers())
       # Check whether we still have pieces left to send
       if not self.pieces_left:
-        self.log.debug("Download completed, cleaning up...")
+        sys.stdout.write("\nDownload completed, cleaning up...\n")
         sys.exit(0)
       for peer_index, peer in enumerate(self.peers):
         # Process requests
@@ -214,7 +214,7 @@ class Torrent(object):
       return "started"
 
   # TODO: Make property -- info_hash is constant
-  def get_info_hash(self,info_key):
+  def get_info_hash(self, info_key):
     '''Returns a binary string of a sha1 hash'''
     return sha(bencoder.encode(info_key).encode("latin-1")).digest()
 
@@ -228,6 +228,7 @@ class Torrent(object):
     addtl_peers = []
     for t in self.trackers:
       if self.trackers[t].can_reannounce() and self.trackers[t].is_available():
+        sys.stdout.write("\nQuerying tracker(s)")
         l = self.trackers[t].announce(self.get_announce_string())
         if l is None or len(l) == 0:
           pass
@@ -297,7 +298,9 @@ class Torrent(object):
     for index, piece in enumerate(self.pieces):
       piece['have'] = self.check_piece(index, b''.join(
         [chunkfile.read_from(offset, chunklen) for chunkfile, offset, chunklen in self.piece_info(index)]))
-    self.log.debug("Starting with %s pieces" % len([n for n in self.pieces if n['have']]))
+      sys.stdout.write("\rMapping existing file data: {0:.2f}%".format((index+1)/len(self.pieces)*100))
+      sys.stdout.flush()
+    sys.stdout.write("\nStarting with %s pieces" % len([n for n in self.pieces if n['have']]))
 
   def piece_info(self, pieceindex):
     '''Returns a list of tuples containing the File object(s) this piece belongs to,
