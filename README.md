@@ -1,8 +1,10 @@
 # BitClient - BitTorrent Client written in Python 3.3
 
-BitClient is a lightweight BitTorrent client that only uses code from the standard p3k library.
+BitClient is a lightweight BitTorrent client that only uses code from the
+standard p3k library.
 
-I created it to get familiar with Python, Networking, and writing code by following a specification.
+I created it to get familiar with Python, Networking, and writing code by
+following a specification.
 
 ## Requirements
 Minimum: Python 3.3.0
@@ -12,7 +14,8 @@ Tested only under GNU/Linux
 To use, simply call from terminal:
     python3 bitclient.py
 
-The script will look for any .torrent file under the torrents/ folder and begin download
+The script will look for any .torrent file under the torrents/ folder and begin
+download
 
 ## TODO
 ### Functional
