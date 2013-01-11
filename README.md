@@ -21,8 +21,8 @@ download
 ### Functional
 * ~~Set 'rate' modifier to update only the last line in terminal buffer~~
 * ~~Write pieces directly to file\(s\) \(get rid of .part files\)~~
-* Troubleshoot high CPU usage from prolonged usage \(possibly from setting 
-  asyncore.loop\(\) exit condition?\)
+* Fix CPU usage from asyncore.loop call
+* Add a task manager
 * Send Bitfield and have messages
 * Accept incoming requests, send pieces as requested
 * Better multi-torrent support
