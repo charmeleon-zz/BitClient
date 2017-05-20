@@ -12,6 +12,7 @@ Tested only under GNU/Linux
 
 ## Usage
 To use, simply call from terminal:
+
     python3 bitclient.py
 
 The script will look for any .torrent file under the torrents/ folder and begin
